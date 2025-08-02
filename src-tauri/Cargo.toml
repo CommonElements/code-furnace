@@ -1,0 +1,43 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.3.1", features = [] }
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+
+# Tauri dependencies
+tauri = { version = "2.7.0", features = [] }
+tauri-plugin-log = { version = "2", features = ["colored"] }
+log = "0.4"
+
+# Local workspace crates
+code-furnace-agents = { path = "../crates/agents" }
+code-furnace-terminal = { path = "../crates/terminal" }
+code-furnace-editor = { path = "../crates/editor" }
+code-furnace-canvas = { path = "../crates/canvas" }
+code-furnace-events = { path = "../crates/events" }
+code-furnace-workspace = { path = "../crates/workspace" }
+code-furnace-plugins = { path = "../crates/plugins" }
+code-furnace-utils = { path = "../crates/utils" }

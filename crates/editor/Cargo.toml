@@ -1,0 +1,23 @@
+[package]
+name = "code-furnace-editor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Workspace dependencies
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+
+# Local dependencies
+code-furnace-events = { path = "../events" }
+code-furnace-utils = { path = "../utils" }
+
+# Editor-specific dependencies
+tower-lsp = "0.20"
+lsp-types = "0.95"
