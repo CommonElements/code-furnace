@@ -107,7 +107,7 @@ Specialized AI agents for different development tasks:
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-username/code-furnace.git
+   git clone https://github.com/CommonElements/code-furnace.git
    cd code-furnace
    ```
 
@@ -242,7 +242,7 @@ Code Furnace is licensed under the [MIT License](LICENSE).
 ## 🤝 Community
 
 - **Discord**: [Join our community](https://discord.gg/code-furnace)
-- **GitHub Discussions**: [Share ideas and ask questions](https://github.com/your-username/code-furnace/discussions)
+- **GitHub Discussions**: [Share ideas and ask questions](https://github.com/CommonElements/code-furnace/discussions)
 - **Twitter**: [@CodeFurnaceApp](https://twitter.com/CodeFurnaceApp)
 - **Blog**: [Latest updates and tutorials](https://blog.code-furnace.dev)
 
@@ -259,4 +259,4 @@ Code Furnace is built on the shoulders of giants. Special thanks to:
 
 **Ready to forge the future of development?** 🔥
 
-[Download Code Furnace](https://github.com/your-username/code-furnace/releases) | [Documentation](https://docs.code-furnace.dev) | [Community](https://discord.gg/code-furnace)
+[Download Code Furnace](https://github.com/CommonElements/code-furnace/releases) | [Documentation](https://docs.code-furnace.dev) | [Community](https://discord.gg/code-furnace)
