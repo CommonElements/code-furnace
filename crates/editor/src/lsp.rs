@@ -35,9 +35,25 @@ pub struct LSPCompletionItem {
     pub label: String,
     pub kind: Option<u32>,
     pub detail: Option<String>,
-    pub documentation: Option<String>,
+    pub documentation: Option<LSPDocumentation>,
+    #[serde(rename = "insertText")]
     pub insert_text: Option<String>,
+    #[serde(rename = "sortText")]
     pub sort_text: Option<String>,
+    #[serde(rename = "filterText")]
+    pub filter_text: Option<String>,
+    #[serde(rename = "preselect")]
+    pub preselect: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LSPDocumentation {
+    String(String),
+    MarkupContent {
+        kind: String,
+        value: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -566,8 +582,15 @@ impl LSPServer {
                             match item {
                                 serde_json::Value::String(s) => contents.push(s.clone()),
                                 serde_json::Value::Object(obj) => {
+                                    // Handle MarkupContent format
                                     if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
                                         contents.push(value.to_string());
+                                    } else if let Some(content) = obj.get("contents").and_then(|v| v.as_str()) {
+                                        contents.push(content.to_string());
+                                    } else if let Some(language) = obj.get("language").and_then(|v| v.as_str()) {
+                                        if let Some(code_value) = obj.get("value").and_then(|v| v.as_str()) {
+                                            contents.push(format!("```{}\n{}\n```", language, code_value));
+                                        }
                                     }
                                 }
                                 _ => {}
@@ -575,7 +598,20 @@ impl LSPServer {
                         }
                     }
                     serde_json::Value::Object(obj) => {
-                        if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
+                        // Handle single MarkupContent or MarkedString
+                        if let Some(kind) = obj.get("kind").and_then(|k| k.as_str()) {
+                            if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
+                                if kind == "markdown" {
+                                    contents.push(value.to_string());
+                                } else {
+                                    contents.push(value.to_string());
+                                }
+                            }
+                        } else if let Some(language) = obj.get("language").and_then(|v| v.as_str()) {
+                            if let Some(code_value) = obj.get("value").and_then(|v| v.as_str()) {
+                                contents.push(format!("```{}\n{}\n```", language, code_value));
+                            }
+                        } else if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
                             contents.push(value.to_string());
                         }
                     }

@@ -47,6 +47,20 @@ impl ClaudeProvider {
     }
 }
 
+pub struct OpenAIProvider {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl OpenAIProvider {
+    pub fn new(api_key: String) -> Self {
+        Self {
+            api_key,
+            client: reqwest::Client::new(),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl AgentProvider for ClaudeProvider {
     async fn process_request(&self, request: &AgentRequest) -> Result<AgentResponse> {
@@ -107,6 +121,80 @@ impl AgentProvider for ClaudeProvider {
     
     fn provider_name(&self) -> &str {
         "claude"
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentProvider for OpenAIProvider {
+    async fn process_request(&self, request: &AgentRequest) -> Result<AgentResponse> {
+        let mut messages = vec![
+            serde_json::json!({
+                "role": "system",
+                "content": "You are a helpful AI assistant integrated into Code Furnace, a powerful development environment. Help users with coding, debugging, and development tasks."
+            }),
+        ];
+        
+        // Add file context if provided
+        if !request.files.is_empty() {
+            let mut context_content = request.prompt.clone();
+            context_content.push_str("\n\nFile context:\n");
+            for file_path in &request.files {
+                if let Ok(content) = tokio::fs::read_to_string(file_path).await {
+                    context_content.push_str(&format!("File: {}\n```\n{}\n```\n\n", file_path, content));
+                }
+            }
+            messages.push(serde_json::json!({
+                "role": "user",
+                "content": context_content
+            }));
+        } else {
+            messages.push(serde_json::json!({
+                "role": "user",
+                "content": request.prompt
+            }));
+        }
+        
+        let payload = serde_json::json!({
+            "model": "gpt-4o",
+            "messages": messages,
+            "max_tokens": 4000,
+            "temperature": 0.7
+        });
+        
+        let response = self.client
+            .post("https://api.openai.com/v1/chat/completions")
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&payload)
+            .send()
+            .await?;
+        
+        if response.status().is_success() {
+            let openai_response: serde_json::Value = response.json().await?;
+            let content = openai_response["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("No response")
+                .to_string();
+            
+            Ok(AgentResponse {
+                request_id: request.id,
+                content,
+                metadata: HashMap::new(),
+                error: None,
+            })
+        } else {
+            let error_text = response.text().await.unwrap_or_default();
+            Ok(AgentResponse {
+                request_id: request.id,
+                content: String::new(),
+                metadata: HashMap::new(),
+                error: Some(format!("OpenAI API Error: {}", error_text)),
+            })
+        }
+    }
+    
+    fn provider_name(&self) -> &str {
+        "openai"
     }
 }
 

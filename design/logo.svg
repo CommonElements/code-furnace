@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Lava gradient -->
+    <radialGradient id="lavaCore" cx="50%" cy="45%" r="60%">
+      <stop offset="0%" stop-color="#FFD700" stop-opacity="1"/>
+      <stop offset="25%" stop-color="#FF8C00" stop-opacity="1"/>
+      <stop offset="65%" stop-color="#FF4500" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#DC143C" stop-opacity="1"/>
+    </radialGradient>
+    
+    <!-- Obsidian gradient -->
+    <radialGradient id="obsidian" cx="50%" cy="50%" r="80%">
+      <stop offset="0%" stop-color="#2D2D2D" stop-opacity="1"/>
+      <stop offset="70%" stop-color="#1A1A1A" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#0D0D0D" stop-opacity="1"/>
+    </radialGradient>
+    
+    <!-- Glow effect -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge> 
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Ember glow -->
+    <filter id="emberGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge> 
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <!-- Forge shadow -->
+    <filter id="forgeShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+  
+  <!-- Background circle (obsidian) -->
+  <circle cx="256" cy="256" r="240" fill="url(#obsidian)" filter="url(#forgeShadow)"/>
+  
+  <!-- Outer volcanic ring -->
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#FF4500" stroke-width="3" opacity="0.6"/>
+  
+  <!-- Forge anvil base (dark foundation) -->
+  <path d="M 160 380 L 352 380 Q 360 380 360 372 L 360 340 Q 360 332 352 332 L 160 332 Q 152 332 152 340 L 152 372 Q 152 380 160 380 Z" 
+        fill="#0D0D0D" stroke="#FF4500" stroke-width="2" opacity="0.8"/>
+  
+  <!-- Main furnace body (angular, modern) -->
+  <path d="M 200 320 L 312 320 Q 320 320 320 312 L 320 180 Q 320 140 290 120 L 280 110 Q 270 100 256 100 Q 242 100 232 110 L 222 120 Q 192 140 192 180 L 192 312 Q 192 320 200 320 Z" 
+        fill="url(#obsidian)" stroke="#FF8C00" stroke-width="3" filter="url(#glow)"/>
+  
+  <!-- Lava core (glowing center) -->
+  <ellipse cx="256" cy="200" rx="45" ry="60" fill="url(#lavaCore)" filter="url(#emberGlow)"/>
+  
+  <!-- Molten cracks (asymmetric for realism) -->
+  <path d="M 220 160 Q 240 170 256 160 Q 272 170 292 160" 
+        fill="none" stroke="#FFD700" stroke-width="3" opacity="0.9" filter="url(#emberGlow)"/>
+  <path d="M 210 200 Q 230 210 256 200 Q 282 210 302 200" 
+        fill="none" stroke="#FF8C00" stroke-width="4" opacity="0.8" filter="url(#emberGlow)"/>
+  <path d="M 225 240 Q 245 250 256 240 Q 267 250 287 240" 
+        fill="none" stroke="#FF4500" stroke-width="3" opacity="0.7" filter="url(#emberGlow)"/>
+  
+  <!-- Forge opening (furnace mouth) -->
+  <ellipse cx="256" cy="140" rx="25" ry="15" fill="#000000" stroke="#FF4500" stroke-width="2"/>
+  <ellipse cx="256" cy="140" rx="20" ry="10" fill="#FF8C00" opacity="0.6" filter="url(#emberGlow)"/>
+  
+  <!-- Code brackets (subtle integration) -->
+  <text x="180" y="280" font-family="JetBrains Mono, monospace" font-size="24" font-weight="bold" 
+        fill="#FF8C00" opacity="0.8" filter="url(#emberGlow)">&lt;</text>
+  <text x="308" y="280" font-family="JetBrains Mono, monospace" font-size="24" font-weight="bold" 
+        fill="#FF8C00" opacity="0.8" filter="url(#emberGlow)">/&gt;</text>
+  
+  <!-- Sparks/embers floating upward -->
+  <circle cx="200" cy="120" r="3" fill="#FFD700" filter="url(#emberGlow)"/>
+  <circle cx="320" cy="100" r="2" fill="#FF8C00" filter="url(#emberGlow)"/>
+  <circle cx="280" cy="80" r="2.5" fill="#FFD700" filter="url(#emberGlow)"/>
+  <circle cx="180" cy="90" r="2" fill="#FF4500" filter="url(#emberGlow)"/>
+  <circle cx="340" cy="130" r="1.5" fill="#FF8C00" filter="url(#emberGlow)"/>
+  
+  <!-- Furnace vents (cooling slits) -->
+  <rect x="200" y="300" width="20" height="3" fill="#FF4500" opacity="0.6"/>
+  <rect x="230" y="300" width="20" height="3" fill="#FF4500" opacity="0.6"/>
+  <rect x="260" y="300" width="20" height="3" fill="#FF4500" opacity="0.6"/>
+  <rect x="290" y="300" width="20" height="3" fill="#FF4500" opacity="0.6"/>
+  
+  <!-- Tool elements (subtle forge tools) -->
+  <path d="M 340 250 L 360 250 Q 365 250 365 255 L 365 260 Q 365 265 360 265 L 340 265" 
+        fill="#2D2D2D" stroke="#FF4500" stroke-width="1.5" opacity="0.7"/>
+  <path d="M 152 250 L 172 250 Q 177 250 177 255 L 177 260 Q 177 265 172 265 L 152 265" 
+        fill="#2D2D2D" stroke="#FF4500" stroke-width="1.5" opacity="0.7"/>
+  
+  <!-- Central focal point (bright core) -->
+  <circle cx="256" cy="200" r="12" fill="#FFD700" filter="url(#emberGlow)" opacity="0.9"/>
+  <circle cx="256" cy="200" r="6" fill="#FFFFFF" opacity="0.8"/>
+</svg>

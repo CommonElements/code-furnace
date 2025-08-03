@@ -1,6 +1,7 @@
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::{Manager, State, Emitter};
 use tracing::{info, error};
+use tokio::sync::broadcast;
 
 // Re-export our crates for easier access
 pub use code_furnace_agents as agents;
@@ -60,8 +61,30 @@ impl AppState {
                             agent_bridge.register_specialized_agent(agent_type, Box::new(claude_provider));
                         }
                     }
+                    utils::AgentProvider::OpenAI => {
+                        let base_openai = agents::OpenAIProvider::new(api_key.clone());
+                        agent_bridge.register_provider("openai".to_string(), Box::new(base_openai));
+                        agent_bridge.set_default_provider("openai".to_string());
+                        
+                        // Register specialized agents
+                        let agent_types = vec![
+                            agents::AgentType::CodeExplainer,
+                            agents::AgentType::CodeReviewer,
+                            agents::AgentType::TestGenerator,
+                            agents::AgentType::GitAssistant,
+                            agents::AgentType::UIDesigner,
+                            agents::AgentType::SystemArchitect,
+                            agents::AgentType::DocumentationWriter,
+                            agents::AgentType::Debugger,
+                        ];
+                        
+                        for agent_type in agent_types {
+                            let openai_provider = agents::OpenAIProvider::new(api_key.clone());
+                            agent_bridge.register_specialized_agent(agent_type, Box::new(openai_provider));
+                        }
+                    }
                     _ => {
-                        info!("Other agent providers not yet implemented");
+                        info!("Ollama and other agent providers not yet implemented");
                     }
                 }
             }
@@ -671,6 +694,7 @@ async fn test_agent_connection(
     // Create a test agent provider and attempt a simple request
     let test_provider: Box<dyn agents::AgentProvider> = match provider.as_str() {
         "claude" => Box::new(agents::ClaudeProvider::new(api_key)),
+        "openai" => Box::new(agents::OpenAIProvider::new(api_key)),
         _ => return Err("Unsupported provider for testing".to_string()),
     };
     
@@ -688,6 +712,164 @@ async fn test_agent_connection(
     }
 }
 
+// Canvas Commands
+#[tauri::command]
+async fn create_canvas(
+    state: State<'_, AppState>,
+    name: String,
+    mode: String,
+) -> Result<String, String> {
+    let canvas_mode = match mode.as_str() {
+        "freeform" => canvas::CanvasMode::Freeform,
+        "wireframe" => canvas::CanvasMode::Wireframe,
+        "flowchart" => canvas::CanvasMode::Flowchart,
+        "system-design" => canvas::CanvasMode::SystemDesign,
+        _ => canvas::CanvasMode::Freeform,
+    };
+    
+    let canvas = canvas::Canvas::new(name, canvas_mode);
+    let canvas_id = canvas.id;
+    
+    // Store canvas in workspace manager (canvases are project-specific)
+    // For now, we'll just return the ID - in a full implementation this would be persisted
+    Ok(canvas_id.to_string())
+}
+
+#[tauri::command]
+async fn get_canvas(
+    state: State<'_, AppState>,
+    canvas_id: String,
+) -> Result<Option<canvas::Canvas>, String> {
+    // In a full implementation, this would retrieve from storage
+    // For now, return a placeholder
+    Ok(None)
+}
+
+#[tauri::command]
+async fn update_canvas(
+    state: State<'_, AppState>,
+    canvas_id: String,
+    canvas_data: serde_json::Value,
+) -> Result<(), String> {
+    // In a full implementation, this would update the stored canvas
+    // Publish canvas update event
+    let event = events::Event::new(
+        "canvas.updated",
+        "canvas-manager",
+        serde_json::json!({
+            "canvas_id": canvas_id,
+            "data": canvas_data
+        }),
+    );
+    state.event_bus.publish(event).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn save_canvas(
+    state: State<'_, AppState>,
+    canvas_id: String,
+) -> Result<(), String> {
+    // In a full implementation, this would persist the canvas to disk
+    let event = events::Event::new(
+        "canvas.saved",
+        "canvas-manager",
+        serde_json::json!({
+            "canvas_id": canvas_id
+        }),
+    );
+    state.event_bus.publish(event).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn list_canvases(
+    state: State<'_, AppState>,
+) -> Result<Vec<canvas::Canvas>, String> {
+    // In a full implementation, this would return all stored canvases
+    Ok(Vec::new())
+}
+
+#[tauri::command]
+async fn delete_canvas(
+    state: State<'_, AppState>,
+    canvas_id: String,
+) -> Result<(), String> {
+    // In a full implementation, this would delete the canvas
+    let event = events::Event::new(
+        "canvas.deleted",
+        "canvas-manager",
+        serde_json::json!({
+            "canvas_id": canvas_id
+        }),
+    );
+    state.event_bus.publish(event).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn export_canvas(
+    state: State<'_, AppState>,
+    canvas_id: String,
+    format: String,
+) -> Result<String, String> {
+    // In a full implementation, this would export the canvas in the specified format
+    match format.as_str() {
+        "json" => Ok(serde_json::json!({"canvas_id": canvas_id, "format": "json"}).to_string()),
+        "mermaid" => Ok(format!("graph TD\n  A[Canvas {}] --> B[Exported]", canvas_id)),
+        "svg" => Ok(format!("<svg><text>Canvas {}</text></svg>", canvas_id)),
+        _ => Err("Unsupported export format".to_string()),
+    }
+}
+
+// Event System Commands - for real-time frontend updates
+#[tauri::command]
+async fn subscribe_to_events(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    event_types: Vec<String>,
+) -> Result<(), String> {
+    let event_bus = state.event_bus.clone();
+    
+    // Create receivers for each event type
+    for event_type in event_types {
+        let receiver = if event_type == "*" {
+            event_bus.subscribe(None)
+        } else {
+            event_bus.subscribe(Some(&event_type))
+        };
+        
+        let app_handle = app.clone();
+        let event_type_clone = event_type.clone();
+        
+        // Spawn a task to listen for events and emit them to frontend
+        tokio::spawn(async move {
+            let mut rx = receiver;
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        // Emit event to frontend
+                        if let Err(e) = app_handle.emit(&format!("event:{}", event_type_clone), &event) {
+                            tracing::error!("Failed to emit event to frontend: {}", e);
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Event channel closed for type: {}", event_type_clone);
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(missed)) => {
+                        tracing::warn!("Event listener lagged, missed {} events for type: {}", missed, event_type_clone);
+                        // Continue listening
+                    }
+                }
+            }
+        });
+    }
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -696,6 +878,8 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // Initialize application state asynchronously
             let handle = app.handle().clone();
@@ -774,6 +958,14 @@ pub fn run() {
             update_ui_preferences,
             validate_config,
             test_agent_connection,
+            subscribe_to_events,
+            create_canvas,
+            get_canvas,
+            update_canvas,
+            save_canvas,
+            list_canvases,
+            delete_canvas,
+            export_canvas,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

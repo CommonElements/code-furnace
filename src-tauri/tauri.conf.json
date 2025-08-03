@@ -2,25 +2,31 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Code Furnace",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.commonelements.code-furnace",
   "build": {
     "frontendDist": "../frontend/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": "",
+    "beforeBuildCommand": ""
   },
   "app": {
     "windows": [
       {
-        "title": "Code Furnace",
+        "title": "Code Furnace - AI-Powered Development Environment",
         "width": 1400,
         "height": 900,
+        "minWidth": 800,
+        "minHeight": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "center": true,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' tauri: https:"
     }
   },
   "bundle": {
@@ -32,6 +38,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Next-generation terminal and IDE hybrid powered by AI agents",
+    "longDescription": "Code Furnace is a revolutionary development environment that combines intelligent terminal management, advanced code editing, AI agent assistance, and comprehensive Git integration in a beautiful volcanic-themed interface.",
+    "copyright": "Copyright © 2025 Common Elements. All rights reserved.",
+    "publisher": "Common Elements",
+    "homepage": "https://code-furnace.dev"
   }
 }
