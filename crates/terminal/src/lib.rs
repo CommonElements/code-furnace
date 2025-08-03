@@ -2,8 +2,11 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, RwLock, Mutex};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
 use uuid::Uuid;
+use std::process::Stdio;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalBlock {
@@ -63,10 +66,23 @@ impl TerminalSession {
     pub fn get_latest_block(&self) -> Option<&TerminalBlock> {
         self.blocks.last()
     }
+    
+    pub fn get_latest_block_mut(&mut self) -> Option<&mut TerminalBlock> {
+        self.blocks.last_mut()
+    }
+}
+
+#[derive(Debug)]
+pub struct ActiveTerminal {
+    pub child: Arc<Mutex<Option<Child>>>,
+    pub stdin: Arc<Mutex<Option<tokio::process::ChildStdin>>>,
+    pub output_tx: mpsc::UnboundedSender<String>,
+    pub input_rx: Arc<Mutex<mpsc::UnboundedReceiver<String>>>,
 }
 
 pub struct TerminalManager {
     sessions: Arc<RwLock<HashMap<Uuid, TerminalSession>>>,
+    active_terminals: Arc<RwLock<HashMap<Uuid, ActiveTerminal>>>,
     event_bus: code_furnace_events::EventBus,
 }
 
@@ -74,16 +90,32 @@ impl TerminalManager {
     pub fn new(event_bus: code_furnace_events::EventBus) -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            active_terminals: Arc::new(RwLock::new(HashMap::new())),
             event_bus,
         }
     }
     
     pub async fn create_session(&self, name: String, working_directory: std::path::PathBuf) -> Result<Uuid> {
-        let session = TerminalSession::new(name, working_directory);
+        let session = TerminalSession::new(name, working_directory.clone());
         let session_id = session.id;
         
+        // Set up communication channels
+        let (output_tx, _output_rx) = mpsc::unbounded_channel::<String>();
+        let (_input_tx, input_rx) = mpsc::unbounded_channel::<String>();
+        
+        let active_terminal = ActiveTerminal {
+            child: Arc::new(Mutex::new(None)),
+            stdin: Arc::new(Mutex::new(None)),
+            output_tx: output_tx.clone(),
+            input_rx: Arc::new(Mutex::new(input_rx)),
+        };
+        
+        // Store session and active terminal
         let mut sessions = self.sessions.write().await;
+        let mut active_terminals = self.active_terminals.write().await;
+        
         sessions.insert(session_id, session);
+        active_terminals.insert(session_id, active_terminal);
         
         // Publish session created event
         let event = code_furnace_events::Event::new(
@@ -101,23 +133,56 @@ impl TerminalManager {
         
         if let Some(session) = sessions.get_mut(&session_id) {
             let mut block = TerminalBlock::new(command.clone(), session.working_directory.clone());
-            
-            // Execute command (simplified for now - in full implementation would use pty-process)
             let start_time = chrono::Utc::now();
             
-            let output = tokio::process::Command::new(&session.shell)
+            // Execute command using tokio process with better output handling
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+            
+            let mut child = Command::new(&shell)
                 .arg("-c")
                 .arg(&command)
                 .current_dir(&session.working_directory)
-                .output()
-                .await?;
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()?;
             
-            block.output = String::from_utf8_lossy(&output.stdout).to_string();
-            if !output.stderr.is_empty() {
-                block.output.push_str(&format!("\nSTDERR:\n{}", String::from_utf8_lossy(&output.stderr)));
+            let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("Failed to get stdout"))?;
+            let stderr = child.stderr.take().ok_or_else(|| anyhow::anyhow!("Failed to get stderr"))?;
+            
+            // Read stdout and stderr concurrently
+            let stdout_task = async {
+                let mut stdout_reader = BufReader::new(stdout);
+                let mut output = String::new();
+                let mut line = String::new();
+                while stdout_reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    output.push_str(&line);
+                    line.clear();
+                }
+                output
+            };
+            
+            let stderr_task = async {
+                let mut stderr_reader = BufReader::new(stderr);
+                let mut output = String::new();
+                let mut line = String::new();
+                while stderr_reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    output.push_str(&line);
+                    line.clear();
+                }
+                output
+            };
+            
+            // Wait for both output streams and process completion
+            let (stdout_output, stderr_output) = tokio::join!(stdout_task, stderr_task);
+            let exit_status = child.wait().await?;
+            
+            // Combine outputs
+            block.output = stdout_output;
+            if !stderr_output.is_empty() {
+                block.output.push_str(&format!("\nSTDERR:\n{}", stderr_output));
             }
             
-            block.exit_code = output.status.code();
+            block.exit_code = exit_status.code();
             block.duration = Some(chrono::Utc::now() - start_time);
             
             let block_id = block.id;
@@ -131,7 +196,7 @@ impl TerminalManager {
                     "session_id": session_id,
                     "block_id": block_id,
                     "command": command,
-                    "exit_code": output.status.code()
+                    "exit_code": exit_status.code()
                 }),
             );
             self.event_bus.publish(event)?;
@@ -150,5 +215,57 @@ impl TerminalManager {
     pub async fn list_sessions(&self) -> Vec<TerminalSession> {
         let sessions = self.sessions.read().await;
         sessions.values().cloned().collect()
+    }
+    
+    pub async fn send_input(&self, session_id: Uuid, input: String) -> Result<()> {
+        let active_terminals = self.active_terminals.read().await;
+        
+        if let Some(active_terminal) = active_terminals.get(&session_id) {
+            // For now, just store the input - in a full PTY implementation this would send to stdin
+            let _ = active_terminal.output_tx.send(format!("Input received: {}", input));
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Active terminal not found: {}", session_id))
+        }
+    }
+    
+    pub async fn resize_terminal(&self, session_id: Uuid, cols: u16, rows: u16) -> Result<()> {
+        // For now, just acknowledge the resize - in a full PTY implementation this would resize the terminal
+        let event = code_furnace_events::Event::new(
+            "terminal.resized",
+            "terminal-manager",
+            serde_json::json!({
+                "session_id": session_id,
+                "cols": cols,
+                "rows": rows
+            }),
+        );
+        self.event_bus.publish(event)?;
+        Ok(())
+    }
+    
+    pub async fn close_session(&self, session_id: Uuid) -> Result<()> {
+        let mut sessions = self.sessions.write().await;
+        let mut active_terminals = self.active_terminals.write().await;
+        
+        // Mark session as inactive
+        if let Some(session) = sessions.get_mut(&session_id) {
+            session.active = false;
+        }
+        
+        // Clean up active terminal
+        if let Some(_active_terminal) = active_terminals.remove(&session_id) {
+            // Terminal resources will be dropped and cleaned up automatically
+        }
+        
+        // Publish session closed event
+        let event = code_furnace_events::Event::new(
+            "terminal.session.closed",
+            "terminal-manager",
+            serde_json::to_value(&session_id)?,
+        );
+        self.event_bus.publish(event)?;
+        
+        Ok(())
     }
 }

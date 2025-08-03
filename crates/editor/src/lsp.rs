@@ -4,9 +4,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, ChildStdin};
-use tokio::sync::RwLock;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::time::{timeout, Duration};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LSPDiagnostic {
@@ -54,6 +55,16 @@ pub struct LSPServer {
     process: Option<Child>,
     request_id: Arc<RwLock<u64>>,
     diagnostics: Arc<RwLock<HashMap<String, Vec<LSPDiagnostic>>>>,
+    response_sender: Option<mpsc::UnboundedSender<LSPRequest>>,
+    pending_requests: Arc<RwLock<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
+}
+
+#[derive(Debug)]
+struct LSPRequest {
+    id: u64,
+    method: String,
+    params: serde_json::Value,
+    response_tx: oneshot::Sender<serde_json::Value>,
 }
 
 impl LSPServer {
@@ -66,6 +77,8 @@ impl LSPServer {
             process: None,
             request_id: Arc::new(RwLock::new(0)),
             diagnostics: Arc::new(RwLock::new(HashMap::new())),
+            response_sender: None,
+            pending_requests: Arc::new(RwLock::new(HashMap::new())),
         }
     }
     
@@ -77,12 +90,144 @@ impl LSPServer {
            .stderr(Stdio::piped());
         
         let mut child = tokio::process::Command::from(cmd).spawn()?;
+        let stdout = child.stdout.take().expect("Failed to get stdout");
+        
+        // Create channels for handling requests and responses
+        let (request_tx, request_rx) = mpsc::unbounded_channel::<LSPRequest>();
+        self.response_sender = Some(request_tx);
+        
+        // Spawn background task to handle LSP communication
+        let pending_requests = self.pending_requests.clone();
+        let diagnostics = self.diagnostics.clone();
+        tokio::spawn(async move {
+            Self::handle_lsp_communication(stdout, request_rx, pending_requests, diagnostics).await;
+        });
         
         // Initialize the LSP server
         self.send_initialize(&mut child, workspace_root).await?;
         
         self.process = Some(child);
         Ok(())
+    }
+    
+    async fn handle_lsp_communication(
+        stdout: ChildStdout,
+        mut request_rx: mpsc::UnboundedReceiver<LSPRequest>,
+        pending_requests: Arc<RwLock<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
+        diagnostics: Arc<RwLock<HashMap<String, Vec<LSPDiagnostic>>>>,
+    ) {
+        let mut reader = BufReader::new(stdout);
+        let mut buffer = String::new();
+        
+        loop {
+            tokio::select! {
+                // Handle incoming requests (not needed for this simplified version)
+                _ = request_rx.recv() => {
+                    // Requests are handled directly by the methods
+                }
+                
+                // Read LSP messages from stdout
+                result = Self::read_lsp_message(&mut reader, &mut buffer) => {
+                    match result {
+                        Ok(Some(message)) => {
+                            Self::process_lsp_message(message, &pending_requests, &diagnostics).await;
+                        }
+                        Ok(None) => {
+                            // EOF reached
+                            break;
+                        }
+                        Err(e) => {
+                            tracing::error!("Error reading LSP message: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    async fn read_lsp_message(
+        reader: &mut BufReader<ChildStdout>,
+        buffer: &mut String,
+    ) -> Result<Option<serde_json::Value>> {
+        buffer.clear();
+        
+        // Read Content-Length header
+        if reader.read_line(buffer).await? == 0 {
+            return Ok(None);
+        }
+        
+        let content_length = if let Some(length_str) = buffer.strip_prefix("Content-Length: ") {
+            length_str.trim().parse::<usize>()?
+        } else {
+            return Err(anyhow::anyhow!("Invalid LSP message format"));
+        };
+        
+        // Read additional headers until empty line
+        loop {
+            buffer.clear();
+            if reader.read_line(buffer).await? == 0 {
+                return Ok(None);
+            }
+            if buffer.trim().is_empty() {
+                break;
+            }
+        }
+        
+        // Read the JSON content
+        let mut content = vec![0u8; content_length];
+        reader.read_exact(&mut content).await?;
+        
+        let json_str = String::from_utf8(content)?;
+        let message: serde_json::Value = serde_json::from_str(&json_str)?;
+        
+        Ok(Some(message))
+    }
+    
+    async fn process_lsp_message(
+        message: serde_json::Value,
+        pending_requests: &Arc<RwLock<HashMap<u64, oneshot::Sender<serde_json::Value>>>>,
+        diagnostics: &Arc<RwLock<HashMap<String, Vec<LSPDiagnostic>>>>,
+    ) {
+        if let Some(method) = message.get("method").and_then(|m| m.as_str()) {
+            // Handle notifications
+            match method {
+                "textDocument/publishDiagnostics" => {
+                    if let Some(params) = message.get("params") {
+                        Self::handle_diagnostics(params, diagnostics).await;
+                    }
+                }
+                _ => {
+                    // Other notifications can be handled here
+                }
+            }
+        } else if let Some(id) = message.get("id").and_then(|i| i.as_u64()) {
+            // Handle responses to our requests
+            let mut pending = pending_requests.write().await;
+            if let Some(sender) = pending.remove(&id) {
+                let _ = sender.send(message);
+            }
+        }
+    }
+    
+    async fn handle_diagnostics(
+        params: &serde_json::Value,
+        diagnostics: &Arc<RwLock<HashMap<String, Vec<LSPDiagnostic>>>>,
+    ) {
+        if let (Some(uri), Some(diags_json)) = (
+            params.get("uri").and_then(|u| u.as_str()),
+            params.get("diagnostics").and_then(|d| d.as_array())
+        ) {
+            let mut parsed_diagnostics = Vec::new();
+            
+            for diag in diags_json {
+                if let Ok(diagnostic) = serde_json::from_value::<LSPDiagnostic>(diag.clone()) {
+                    parsed_diagnostics.push(diagnostic);
+                }
+            }
+            
+            let mut diag_map = diagnostics.write().await;
+            diag_map.insert(uri.to_string(), parsed_diagnostics);
+        }
     }
     
     async fn send_initialize(&self, child: &mut Child, workspace_root: PathBuf) -> Result<()> {
@@ -292,14 +437,61 @@ impl LSPServer {
                 }
             });
             
+            // Create response channel
+            let (response_tx, response_rx) = oneshot::channel();
+            {
+                let mut pending = self.pending_requests.write().await;
+                pending.insert(id, response_tx);
+            }
+            
             Self::send_message(stdin, &request).await?;
             
-            // TODO: Wait for response and parse completion items
-            // For now, return empty vector
-            Ok(Vec::new())
+            // Wait for response with timeout
+            match timeout(Duration::from_secs(5), response_rx).await {
+                Ok(Ok(response)) => {
+                    Self::parse_completion_response(response)
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!("LSP completion response channel closed");
+                    Ok(Vec::new())
+                }
+                Err(_) => {
+                    tracing::warn!("LSP completion request timed out");
+                    // Clean up pending request
+                    let mut pending = self.pending_requests.write().await;
+                    pending.remove(&id);
+                    Ok(Vec::new())
+                }
+            }
         } else {
             Ok(Vec::new())
         }
+    }
+    
+    fn parse_completion_response(response: serde_json::Value) -> Result<Vec<LSPCompletionItem>> {
+        let mut items = Vec::new();
+        
+        if let Some(result) = response.get("result") {
+            // Handle both CompletionList and CompletionItem[] formats
+            let empty_vec = vec![];
+            let completion_items = if let Some(list) = result.get("items") {
+                // CompletionList format
+                list.as_array().unwrap_or(&empty_vec)
+            } else if result.is_array() {
+                // Direct CompletionItem[] format
+                result.as_array().unwrap_or(&empty_vec)
+            } else {
+                return Ok(items);
+            };
+            
+            for item_json in completion_items {
+                if let Ok(item) = serde_json::from_value::<LSPCompletionItem>(item_json.clone()) {
+                    items.push(item);
+                }
+            }
+        }
+        
+        Ok(items)
     }
     
     pub async fn hover(&mut self, uri: String, line: u32, character: u32) -> Result<Option<LSPHover>> {
@@ -324,10 +516,81 @@ impl LSPServer {
                 }
             });
             
+            // Create response channel
+            let (response_tx, response_rx) = oneshot::channel();
+            {
+                let mut pending = self.pending_requests.write().await;
+                pending.insert(id, response_tx);
+            }
+            
             Self::send_message(stdin, &request).await?;
             
-            // TODO: Wait for response and parse hover info
+            // Wait for response with timeout
+            match timeout(Duration::from_secs(5), response_rx).await {
+                Ok(Ok(response)) => {
+                    Ok(Self::parse_hover_response(response)?)
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!("LSP hover response channel closed");
+                    Ok(None)
+                }
+                Err(_) => {
+                    tracing::warn!("LSP hover request timed out");
+                    // Clean up pending request
+                    let mut pending = self.pending_requests.write().await;
+                    pending.remove(&id);
+                    Ok(None)
+                }
+            }
+        } else {
             Ok(None)
+        }
+    }
+    
+    fn parse_hover_response(response: serde_json::Value) -> Result<Option<LSPHover>> {
+        if let Some(result) = response.get("result") {
+            if result.is_null() {
+                return Ok(None);
+            }
+            
+            let contents = if let Some(contents_json) = result.get("contents") {
+                let mut contents = Vec::new();
+                
+                // Handle different formats of hover contents
+                match contents_json {
+                    serde_json::Value::String(s) => {
+                        contents.push(s.clone());
+                    }
+                    serde_json::Value::Array(arr) => {
+                        for item in arr {
+                            match item {
+                                serde_json::Value::String(s) => contents.push(s.clone()),
+                                serde_json::Value::Object(obj) => {
+                                    if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
+                                        contents.push(value.to_string());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    serde_json::Value::Object(obj) => {
+                        if let Some(value) = obj.get("value").and_then(|v| v.as_str()) {
+                            contents.push(value.to_string());
+                        }
+                    }
+                    _ => {}
+                }
+                
+                contents
+            } else {
+                Vec::new()
+            };
+            
+            let range = result.get("range")
+                .and_then(|r| serde_json::from_value(r.clone()).ok());
+            
+            Ok(Some(LSPHover { contents, range }))
         } else {
             Ok(None)
         }

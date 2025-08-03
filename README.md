@@ -158,10 +158,34 @@ Create a `config.json` file in your user data directory:
 }
 ```
 
+## 🌋 Molten Core Theme System
+
+Code Furnace features a unique **volcanic theme system** inspired by the concept of molten lava flowing through dark obsidian rock. This creates an immersive coding environment that matches our "furnace" branding.
+
+### Theme Philosophy
+- **Dark Foundation**: Obsidian backgrounds (#0D0D0D to #2D2D2D) for reduced eye strain
+- **Energetic Accents**: Lava-colored interactive elements (#FF4500 OrangeRed, #FF8C00 DarkOrange)
+- **Visual Hierarchy**: Bright, warm highlights draw attention to important elements
+- **Consistent Experience**: Unified theme across all components including Monaco editor
+
+### Key Features
+- **Dynamic Theme Switching**: CSS custom properties for instant theme changes
+- **Monaco Integration**: Custom syntax highlighting with volcanic colors
+- **Volcanic Animations**: Subtle lava-pulse and ember-glow effects
+- **Semantic Color System**: Intuitive color naming (obsidian, lava, ember)
+
+```typescript
+// Example usage in components
+<button className="bg-lava-primary text-text-inverse hover:bg-lava-secondary shadow-glow">
+  Molten Button
+</button>
+```
+
 ## 📖 Features in Detail
 
 ### AI-Powered Development
 - **Context-aware assistance**: AI agents understand your project structure and codebase
+- **File context selection**: Choose specific files to provide context to AI agents
 - **Intelligent code generation**: Generate boilerplate, tests, and documentation
 - **Smart refactoring**: AI-suggested improvements and modernization
 - **Bug detection**: Proactive identification of potential issues
@@ -180,7 +204,8 @@ Create a `config.json` file in your user data directory:
 - **Cloud sync**: Synchronize settings and projects across devices
 
 ### Customization
-- **Themes**: Light, dark, and custom color schemes
+- **Molten Core Theme**: Volcanic-inspired dark theme with lava accents
+- **Theme System**: Extensible theme architecture for future themes
 - **Keybindings**: Fully customizable keyboard shortcuts
 - **Layout**: Flexible panel arrangement and sizing
 - **Extensions**: Rich plugin ecosystem for additional functionality
@@ -210,21 +235,57 @@ code-furnace/
 1. **Development build**:
    ```bash
    cargo build
-   npm run dev
+   cd frontend && npm run dev
    ```
 
-2. **Run tests**:
+2. **Full Tauri development**:
+   ```bash
+   npm run tauri:dev
+   ```
+
+3. **Run tests**:
    ```bash
    cargo test --all
    npm test
    ```
 
-3. **Lint and format**:
+4. **Lint and format**:
    ```bash
    cargo clippy --all-targets --all-features
    cargo fmt --all
    npm run lint
    ```
+
+### Theme Development
+
+Code Furnace uses a comprehensive theme system built with:
+
+1. **Theme Definition** (`frontend/src/themes/molten-core.ts`):
+   ```typescript
+   export const moltenCoreColors: ThemeColors = {
+     primary: '#FF4500',     // OrangeRed lava
+     obsidian: {
+       darkest: '#0D0D0D',   // Deep volcanic rock
+       dark: '#1A1A1A',      // Standard obsidian
+     },
+     // ... complete color system
+   };
+   ```
+
+2. **React Theme Provider** (`frontend/src/themes/MoltenCoreProvider.tsx`):
+   ```typescript
+   const { theme, setTheme } = useMoltenTheme();
+   const colors = useThemeColors();
+   ```
+
+3. **Tailwind Integration** - Volcanic colors available as utility classes:
+   ```html
+   <div className="bg-obsidian-dark text-lava-primary border-ui-border">
+     Themed Component
+   </div>
+   ```
+
+4. **Monaco Editor Theme** - Custom syntax highlighting with volcanic colors
 
 ### Contributing
 

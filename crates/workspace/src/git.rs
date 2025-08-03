@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::collections::HashSet;
 use chrono::{DateTime, Utc};
+use code_furnace_agents::{AgentProvider, ClaudeProvider, AgentRequest};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitRepository {
@@ -539,19 +540,127 @@ impl GitManager {
         Ok(())
     }
     
-    pub fn generate_ai_commit_message(&self, _repo_path: &PathBuf, staged_files: &[String]) -> Result<String> {
-        // This would integrate with the AI agent system
-        // For now, return a placeholder
-        let file_list = if staged_files.is_empty() {
+    pub async fn generate_ai_commit_message(&self, repo_path: &PathBuf, staged_files: &[String]) -> Result<String> {
+        // Get git status and diffs for AI analysis
+        let status = self.get_status(&Repository::open(repo_path)?)?;
+        let staged_diffs = self.get_diff(repo_path, true)?;
+        
+        let mut diff_context = String::new();
+        for diff in &staged_diffs {
+            let unknown = "unknown".to_string();
+            let file_path = diff.new_file.as_ref().or(diff.old_file.as_ref()).unwrap_or(&unknown);
+            diff_context.push_str(&format!("File: {}\n", file_path));
+            
+            // Determine status based on old_file and new_file
+            let status = match (&diff.old_file, &diff.new_file) {
+                (None, Some(_)) => "added",
+                (Some(_), None) => "deleted",
+                (Some(_), Some(_)) => "modified",
+                (None, None) => "unknown",
+            };
+            diff_context.push_str(&format!("Status: {}\n", status));
+            
+            // Add hunk content
+            for hunk in &diff.hunks {
+                diff_context.push_str(&format!("Hunk: {}\n", hunk.header));
+                for line in &hunk.lines {
+                    diff_context.push_str(&format!("{}\n", line.content));
+                }
+            }
+            diff_context.push_str("\n");
+        }
+        
+        // Load config to check if AI is configured
+        let config = code_furnace_utils::Config::load().unwrap_or_default();
+        if !config.has_agent_configured() {
+            // Fallback to a smart but simple commit message
+            return Ok(self.generate_simple_commit_message(staged_files, &status));
+        }
+        
+        // Create AI agent for commit message generation
+        let claude_provider = code_furnace_agents::ClaudeProvider::new(
+            config.agent_api_key.unwrap_or_default()
+        );
+        
+        let prompt = format!(
+            "Analyze the following git changes and generate a concise, descriptive commit message. \
+            Follow conventional commit format when appropriate (feat:, fix:, docs:, etc.). \
+            The message should be under 50 characters for the title.\n\n\
+            Staged files: {:?}\n\n\
+            Git status summary:\n\
+            - Staged files: {}\n\
+            - Unstaged files: {}\n\
+            - Untracked files: {}\n\n\
+            Diff details:\n{}\n\n\
+            Respond with ONLY the commit message, no explanation or quotes.",
+            staged_files,
+            status.staged.len(),
+            status.unstaged.len(),
+            status.untracked.len(),
+            if diff_context.len() > 2000 {
+                format!("{}...\n[truncated]", &diff_context[..2000])
+            } else {
+                diff_context
+            }
+        );
+        
+        let request = code_furnace_agents::AgentRequest {
+            id: uuid::Uuid::new_v4(),
+            agent_type: "git-assistant".to_string(),
+            prompt,
+            context: std::collections::HashMap::new(),
+            files: Vec::new(),
+        };
+        
+        match claude_provider.process_request(&request).await {
+            Ok(response) if response.error.is_none() => {
+                let commit_message = response.content.trim().to_string();
+                // Ensure the commit message is reasonable
+                if commit_message.len() > 5 && commit_message.len() < 200 {
+                    Ok(commit_message)
+                } else {
+                    Ok(self.generate_simple_commit_message(staged_files, &status))
+                }
+            }
+            _ => {
+                // Fallback to simple commit message
+                Ok(self.generate_simple_commit_message(staged_files, &status))
+            }
+        }
+    }
+    
+    fn generate_simple_commit_message(&self, staged_files: &[String], status: &GitStatus) -> String {
+        // Analyze the types of changes and generate an appropriate message
+        let new_count = status.untracked.len();
+        let staged_count = status.staged.len();
+        let unstaged_count = status.unstaged.len();
+        
+        let prefix = if new_count > staged_count && new_count > unstaged_count {
+            "feat: add"
+        } else if staged_count > 0 {
+            "fix: update"
+        } else if unstaged_count > 0 {
+            "refactor: modify"
+        } else {
+            "chore: update"
+        };
+        
+        let description = if staged_files.is_empty() {
             "multiple files".to_string()
         } else if staged_files.len() == 1 {
-            staged_files[0].clone()
+            let file = &staged_files[0];
+            if let Some(name) = std::path::Path::new(file).file_stem() {
+                name.to_string_lossy().to_string()
+            } else {
+                file.clone()
+            }
+        } else if staged_files.len() <= 3 {
+            staged_files.join(", ")
         } else {
             format!("{} files", staged_files.len())
         };
         
-        // TODO: Integrate with AI agent to analyze changes and generate intelligent commit message
-        Ok(format!("Update {}", file_list))
+        format!("{} {}", prefix, description)
     }
 }
 

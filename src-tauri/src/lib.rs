@@ -162,6 +162,54 @@ async fn get_file_tree(
 }
 
 #[tauri::command]
+async fn expand_directory(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<editor::FileTreeNode>, String> {
+    let path_buf = std::path::PathBuf::from(path);
+    state.editor_manager.expand_directory(path_buf).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn create_file(
+    state: State<'_, AppState>,
+    path: String,
+    content: Option<String>,
+) -> Result<(), String> {
+    let path_buf = std::path::PathBuf::from(path);
+    state.editor_manager.create_file(path_buf, content).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn create_directory(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let path_buf = std::path::PathBuf::from(path);
+    state.editor_manager.create_directory(path_buf).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_file(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<(), String> {
+    let path_buf = std::path::PathBuf::from(path);
+    state.editor_manager.delete_file(path_buf).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn rename_file(
+    state: State<'_, AppState>,
+    old_path: String,
+    new_path: String,
+) -> Result<(), String> {
+    let old_path_buf = std::path::PathBuf::from(old_path);
+    let new_path_buf = std::path::PathBuf::from(new_path);
+    state.editor_manager.rename_file(old_path_buf, new_path_buf).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn set_workspace_root(
     state: State<'_, AppState>,
     root_path: String,
@@ -203,6 +251,36 @@ async fn list_terminal_sessions(
     state: State<'_, AppState>,
 ) -> Result<Vec<terminal::TerminalSession>, String> {
     Ok(state.terminal_manager.list_sessions().await)
+}
+
+#[tauri::command]
+async fn send_terminal_input(
+    state: State<'_, AppState>,
+    session_id: String,
+    input: String,
+) -> Result<(), String> {
+    let session_uuid = uuid::Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+    state.terminal_manager.send_input(session_uuid, input).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn resize_terminal(
+    state: State<'_, AppState>,
+    session_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let session_uuid = uuid::Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+    state.terminal_manager.resize_terminal(session_uuid, cols, rows).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn close_terminal_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<(), String> {
+    let session_uuid = uuid::Uuid::parse_str(&session_id).map_err(|e| e.to_string())?;
+    state.terminal_manager.close_session(session_uuid).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -533,16 +611,91 @@ async fn list_available_agents(
     Ok(agent_bridge.list_available_agents())
 }
 
+// Configuration Commands
+#[tauri::command]
+async fn get_config() -> Result<utils::Config, String> {
+    utils::Config::load().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_agent_config(
+    provider: String,
+    api_key: Option<String>,
+) -> Result<(), String> {
+    let mut config = utils::Config::load().map_err(|e| e.to_string())?;
+    
+    let agent_provider = match provider.as_str() {
+        "claude" => utils::AgentProvider::Claude,
+        "openai" => utils::AgentProvider::OpenAI,
+        "ollama" => utils::AgentProvider::Ollama { 
+            endpoint: "http://localhost:11434".to_string() 
+        },
+        _ => return Err("Invalid agent provider".to_string()),
+    };
+    
+    config.update_agent_config(agent_provider, api_key).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_git_tokens(
+    github_token: Option<String>,
+    gitlab_token: Option<String>,
+    gitea_token: Option<String>,
+) -> Result<(), String> {
+    let mut config = utils::Config::load().map_err(|e| e.to_string())?;
+    config.update_git_tokens(github_token, gitlab_token, gitea_token).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn update_ui_preferences(
+    theme: String,
+    font_size: u32,
+    auto_save: bool,
+    enable_lsp: bool,
+) -> Result<(), String> {
+    let mut config = utils::Config::load().map_err(|e| e.to_string())?;
+    config.update_ui_preferences(theme, font_size, auto_save, enable_lsp).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn validate_config() -> Result<(), String> {
+    let config = utils::Config::load().map_err(|e| e.to_string())?;
+    config.validate().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn test_agent_connection(
+    provider: String,
+    api_key: String,
+) -> Result<bool, String> {
+    // Create a test agent provider and attempt a simple request
+    let test_provider: Box<dyn agents::AgentProvider> = match provider.as_str() {
+        "claude" => Box::new(agents::ClaudeProvider::new(api_key)),
+        _ => return Err("Unsupported provider for testing".to_string()),
+    };
+    
+    let test_request = agents::AgentRequest {
+        id: uuid::Uuid::new_v4(),
+        agent_type: "test".to_string(),
+        prompt: "Say 'OK' if you can read this".to_string(),
+        context: std::collections::HashMap::new(),
+        files: Vec::new(),
+    };
+    
+    match test_provider.process_request(&test_request).await {
+        Ok(response) => Ok(response.error.is_none()),
+        Err(_) => Ok(false),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info,code_furnace=debug")
-        .init();
-
-    info!("Starting Code Furnace application");
-
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build(),
+        )
         .setup(|app| {
             // Initialize application state asynchronously
             let handle = app.handle().clone();
@@ -550,23 +703,16 @@ pub fn run() {
                 match AppState::new().await {
                     Ok(state) => {
                         handle.manage(state);
-                        info!("Code Furnace application state initialized successfully");
+                        log::info!("Code Furnace application state initialized successfully");
                     }
                     Err(e) => {
-                        error!("Failed to initialize application state: {}", e);
+                        log::error!("Failed to initialize application state: {}", e);
                         std::process::exit(1);
                     }
                 }
             });
-
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Debug)
-                        .build(),
-                )?;
-            }
             
+            log::info!("Starting Code Furnace application");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -574,11 +720,19 @@ pub fn run() {
             execute_terminal_command,
             get_terminal_session,
             list_terminal_sessions,
+            send_terminal_input,
+            resize_terminal,
+            close_terminal_session,
             open_file,
             get_file_buffer,
             update_file_buffer,
             save_file_buffer,
             get_file_tree,
+            expand_directory,
+            create_file,
+            create_directory,
+            delete_file,
+            rename_file,
             set_workspace_root,
             list_file_buffers,
             ask_agent,
@@ -614,6 +768,12 @@ pub fn run() {
             set_active_conversation,
             search_conversations,
             list_available_agents,
+            get_config,
+            update_agent_config,
+            update_git_tokens,
+            update_ui_preferences,
+            validate_config,
+            test_agent_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

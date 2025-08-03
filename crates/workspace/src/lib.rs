@@ -644,10 +644,9 @@ impl WorkspaceManager {
     }
     
     pub async fn generate_ai_commit_message(&self, repo_path: &PathBuf, staged_files: &[String]) -> Result<String> {
-        // This would integrate with the AI agent system to generate intelligent commit messages
-        // For now, use the basic implementation in GitManager
+        // Use the AI-powered commit message generation in GitManager
         let git_manager = self.git_manager.read().await;
-        git_manager.generate_ai_commit_message(repo_path, staged_files)
+        git_manager.generate_ai_commit_message(repo_path, staged_files).await
     }
     
     // Quick action to start common project processes
